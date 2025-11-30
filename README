@@ -17,17 +17,17 @@ SYNOPSIS
         my $diff = diff \@records1,  "file_B.txt";
 
 DESCRIPTION
-    "diff()" provides a basic set of services akin to the GNU "diff"
-    utility. It is not anywhere near as feature complete as GNU "diff", but
-    it is better integrated with Perl and available on all platforms. It is
-    often faster than shelling out to a system's "diff" executable for small
+    diff() provides a basic set of services akin to the GNU "diff" utility.
+    It is not anywhere near as feature complete as GNU "diff", but it is
+    better integrated with Perl and available on all platforms. It is often
+    faster than shelling out to a system's "diff" executable for small
     files, and generally slower on larger files.
 
     Relies on Algorithm::Diff for, well, the algorithm. This may not produce
     the same exact diff as a system's local "diff" executable, but it will
     be a valid diff and comprehensible by "patch". We haven't seen any
-    differences between Algorithm::Diff's logic and GNU diff's, but we have
-    not examined them to make sure they are indeed identical.
+    differences between Algorithm::Diff's logic and GNU "diff"'s, but we
+    have not examined them to make sure they are indeed identical.
 
     Note: If you don't want to import the "diff" function, do one of the
     following:
@@ -36,20 +36,23 @@ DESCRIPTION
 
        require Text::Diff;
 
-    That's a pretty rare occurence, so "diff()" is exported by default.
-    =head1 OPTIONS
+    That's a pretty rare occurrence, so diff() is exported by default.
 
+    If you pass a filename, but the file can't be read, then diff() will
+    "croak".
+
+OPTIONS
     diff() takes two parameters from which to draw input and a set of
-    options to control it's output. The options are:
+    options to control its output. The options are:
 
     FILENAME_A, MTIME_A, FILENAME_B, MTIME_B
-        The name of the file and the modification time "files"
+        The name of the file and the modification time "files".
 
         These are filled in automatically for each file when diff() is
         passed a filename, unless a defined value is passed in.
 
         If a filename is not passed in and FILENAME_A and FILENAME_B are not
-        provided or "undef", the header will not be printed.
+        provided or are "undef", the header will not be printed.
 
         Unused on "OldStyle" diffs.
 
@@ -57,26 +60,25 @@ DESCRIPTION
         The index of the first line / element. These default to 1 for all
         parameter types except ARRAY references, for which the default is 0.
         This is because ARRAY references are presumed to be data structures,
-        while the others are line oriented text.
+        while the others are line-oriented text.
 
     STYLE
         "Unified", "Context", "OldStyle", or an object or class reference
-        for a class providing "file_header()", "hunk_header()", "hunk()",
-        "hunk_footer()" and "file_footer()" methods. The two footer()
-        methods are provided for overloading only; none of the formats
-        provide them.
+        for a class providing file_header(), hunk_header(), hunk(),
+        hunk_footer() and file_footer() methods. The two footer() methods
+        are provided for overloading only; none of the formats provide them.
 
         Defaults to "Unified" (unlike standard "diff", but Unified is what's
         most often used in submitting patches and is the most human readable
         of the three.
 
-        If the package indicated by the STYLE has no hunk() method,
-        c<diff()> will load it automatically (lazy loading). Since all such
-        packages should inherit from Text::Diff::Base, this should be marvy.
+        If the package indicated by the STYLE has no hunk() method, diff()
+        will load it automatically (lazy loading). Since all such packages
+        should inherit from "Text::Diff::Base", this should be marvy.
 
-        Styles may be specified as class names ("STYLE =" "Foo"), in which
-        case they will be "new()"ed with no parameters, or as objects
-        ("STYLE =" Foo->new>).
+        Styles may be specified as class names ("STYLE => 'Foo'"), in which
+        case they will be new()ed with no parameters, or as objects ("STYLE
+        => Foo->new").
 
     CONTEXT
         How many lines before and after each diff to display. Ignored on
@@ -103,10 +105,33 @@ DESCRIPTION
     KEYGEN, KEYGEN_ARGS
         These are passed to "traverse_sequences" in Algorithm::Diff.
 
+    COLOR, PALETTE
+        diff() output will be colorized based on GNU "diff" colors depending
+        on the values passed. A true value colorizes only if "STDOUT" or
+        "OUTPUT" handle is an interactive TTY, unless "always" is passed; if
+        false is given, never colorizes. Defaults to 0.
+
+            COLOR => 1,          # like: GNU diff "auto"
+            COLOR => "always",
+
+        With PALETTE, diff() colors can be customized according to the
+        Term::ANSIColor spec by passing a hash with the following:
+
+            ## Hunk sections and its default colors.
+            ## NOTE: invalid colors are ignored.
+            header       => BOLD,    # like: --- A   Mon Nov 12 23:49:30 2001
+            line_number  => CYAN,    # like: @@ -2,13 +2,13 @@
+            delete_line  => RED,     # like: -5d
+            add_line     => GREEN,   # like: +5a
+            same_line    => undef,   # "Unified" unchanged lines
+            context_sep  => undef,   # "Context" separator: "***************"
+            oldstyle_sep => undef,   # "OldStyle" separator: "---"
+            table_frame  => undef,   # "Table" frames: "+--+----+--+----+", "|", "*"
+
     Note: if neither "FILENAME_" option is defined, the header will not be
-    printed. If at one is present, the other and both MTIME_ options must be
-    present or "Use of undefined variable" warnings will be generated
-    (except on "OldStyle" diffs, which ignores these options).
+    printed. If at least one is present, the other and both "MTIME_" options
+    must be present or "Use of undefined variable" warnings will be
+    generated (except on "OldStyle" diffs, which ignores these options).
 
 Formatting Classes
     These functions implement the output formats. They are grouped in to
@@ -116,7 +141,7 @@ Formatting Classes
     may provide them if need be.
 
     Each class has file_header(), hunk_header(), hunk(), and footer()
-    methods identical to those documented in the Text::Diff::Unified
+    methods identical to those documented in the "Text::Diff::Unified"
     section. header() is called before the hunk() is first called, footer()
     afterwards. The default footer function is an empty method provided for
     overloading:
@@ -124,11 +149,11 @@ Formatting Classes
         sub footer { return "End of patch\n" }
 
     Some output formats are provided by external modules (which are loaded
-    automatically), such as Text::Diff::Table. These are are documented here
-    to keep the documentation simple.
+    automatically), such as Text::Diff::Table. These are documented here to
+    keep the documentation simple.
 
   Text::Diff::Base
-    Returns "" for all methods (other than "new()").
+    Returns "" for all methods (other than new()).
 
   Text::Diff::Unified
       --- A   Mon Nov 12 23:49:30 2001
@@ -150,11 +175,11 @@ Formatting Classes
        12
        13
 
-    file_header
+    Text::Diff::Unified::file_header
           $s = Text::Diff::Unified->file_header( $options );
 
         Returns a string containing a unified header. The sole parameter is
-        the options hash passed in to diff(), containing at least:
+        the "options" hash passed in to diff(), containing at least:
 
           FILENAME_A  => $fn1,
           MTIME_A     => $mtime1,
@@ -168,10 +193,10 @@ Formatting Classes
 
         to override the default prefixes (default values shown).
 
-    hunk_header
+    Text::Diff::Unified::hunk_header
           Text::Diff::Unified->hunk_header( \@ops, $options );
 
-        Returns a string containing the output of one hunk of unified diff.
+        Returns a string containing the heading of one hunk of unified diff.
 
     Text::Diff::Unified::hunk
           Text::Diff::Unified->hunk( \@seq_a, \@seq_b, \@ops, $options );
@@ -212,7 +237,7 @@ Formatting Classes
       * 9|embedded ws               |embedded\tws              *
       +--+--------------------------+--------------------------+
 
-    See "Text::Diff::Table" for more details, including how the whitespace
+    See Text::Diff::Table for more details, including how the whitespace
     escaping works.
 
   Text::Diff::Context
@@ -267,17 +292,37 @@ LIMITATIONS
     normal amount of Perlish overhead (one array location) per record. This
     is implied by the implementation of Algorithm::Diff, which takes two
     arrays. If Algorithm::Diff ever offers an incremental mode, this can be
-    changed (contact the maintainers of Algorithm::Diff and Text::Diff if
+    changed (contact the maintainers of Algorithm::Diff and "Text::Diff" if
     you need this; it shouldn't be too terribly hard to tie arrays in this
     fashion).
 
-    Does not provide most of the more refined GNU diff options: recursive
+    Does not provide most of the more refined GNU "diff" options: recursive
     directory tree scanning, ignoring blank lines / whitespace, etc., etc.
     These can all be added as time permits and need arises, many are rather
     easy; patches quite welcome.
 
-    Uses closures internally, this may lead to leaks on "perl" versions
-    5.6.1 and prior if used many times over a process' life time.
+    Uses closures internally, this may lead to leaks on Perl versions 5.6.1
+    and prior if used many times over a process' life time.
+
+SEE ALSO
+    Algorithm::Diff - the underlying implementation of the diff algorithm
+    used by "Text::Diff".
+
+    YAML::Diff - find difference between two YAML documents.
+
+    HTML::Differences - find difference between two HTML documents. This
+    uses a more sane approach than HTML::Diff.
+
+    XML::Diff - find difference between two XML documents.
+
+    Array::Diff - find the differences between two Perl arrays.
+
+    Hash::Diff - find the differences between two Perl hashes.
+
+    Data::Diff - find difference between two arbitrary data structures.
+
+REPOSITORY
+    <https://github.com/neilbowers/Text-Diff>
 
 AUTHOR
     Adam Kennedy <adamk@cpan.org>
