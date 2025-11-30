@@ -18,6 +18,7 @@ WriteMakefile(
     PREREQ_PM    => {
         'Exporter'        => 0,
         'Algorithm::Diff' => '1.19',
+        'Term::ANSIColor' => '2.02',
     },
     ( $] >= 5.005 ? ( AUTHOR => 'Adam Kennedy <adamk@cpan.org>', ) : () ),
     (
