@@ -3,8 +3,9 @@ package Text::Diff::Table;
 use 5.006;
 use strict;
 use warnings;
-use Carp;
 use Text::Diff::Config;
+use Text::Diff          ();
+use Term::ANSIColor     2.02 qw( colorstrip );
 
 our $VERSION   = '1.46';
 our @ISA       = qw( Text::Diff::Base Exporter );
@@ -63,7 +64,7 @@ SCOPE: {
           $_ = ord;
           exists $escapes{$_}
           ? $escapes{$_}
-          : $Text::Diff::Config::Output_Unicode 
+          : $Text::Diff::Config::Output_Unicode
           ? $c
           : sprintf( "\\x{%04x}", $_ );
       } split //, shift;
@@ -97,9 +98,9 @@ sub hunk {
             push @A, $missing_elt while @A < @B;
             push @B, $missing_elt while @B < @A;
         }
-        push @A, [ $_->[0] + ( $options->{OFFSET_A} || 0), $seqs[0][$_->[0]] ]
+        push @A, [ $_->[0] + ( $options->{OFFSET_A} || 0 ), $seqs[0][$_->[0]] ]
             if $opcode eq " " || $opcode eq "-";
-        push @B, [ $_->[1] + ( $options->{OFFSET_B} || 0), $seqs[1][$_->[1]] ]
+        push @B, [ $_->[1] + ( $options->{OFFSET_B} || 0 ), $seqs[1][$_->[1]] ]
             if $opcode eq " " || $opcode eq "+";
     }
 
@@ -107,8 +108,8 @@ sub hunk {
     push @B, $missing_elt while @B < @A;
     my @elts;
     for ( 0..$#A ) {
-        my ( $A, $B ) = (shift @A, shift @B );
-        
+        my ( $A, $B ) = ( shift @A, shift @B );
+
         ## Do minimal cleaning on identical elts so these look "normal":
         ## tabs are expanded, trailing newelts removed, etc.  For differing
         ## elts, make invisible characters visible if the invisible characters
@@ -207,15 +208,13 @@ sub _glean_formats {
     my $self = shift;
 }
 
-sub file_footer {
-    my $self = shift;
-    my @seqs = (shift,shift);
-    my $options = pop;
+sub _header {
+    my ( $options ) = @_;
 
     my @heading_lines;
-    
+
     if ( defined $options->{FILENAME_A} || defined $options->{FILENAME_B} ) {
-        push @heading_lines, [ 
+        push @heading_lines, [
             map(
                 {
                     ( "", escape( defined $_ ? $_ : "<undef>" ) );
@@ -249,6 +248,200 @@ sub file_footer {
             $options->{INDEX_LABEL};
     }
 
+    return @heading_lines;
+}
+
+sub _header_fmt {
+    my ( $options ) = @_;
+
+    my ( $width, $four_column_mode, $palette ) = @{$options}{
+        "width",
+        "column_mode",
+        "palette",
+    };
+
+    my @w = @{$width};
+
+    my $frame  = Text::Diff::_is_color( $palette->{table_frame} );
+    my $header = Text::Diff::_is_color( $palette->{header} );
+    my $res    = Text::Diff::_is_color( $palette->{reset} );
+
+    return $four_column_mode
+        ? (
+            "=" => $frame  . "| %$w[0]s|"   . $res .
+                   $header . "%-$w[1]s"     . $res .
+                   $frame  . "  | %$w[2]s|" . $res .
+                   $header . "%-$w[3]s"     . $res .
+                   $frame  . "  |"          . $res .
+                   "\n",
+        )
+        : (
+            "=" => $frame  . "| %$w[0]s|"      . $res .
+                   $header . "%-$w[1]s"        . $res .
+                   "  "    . $frame      . "|" . $res .
+                   $header . "%-$w[2]s"        . $res .
+                   "  "    . $frame      . "|" . $res .
+                   "\n",
+        );
+}
+
+sub _table_fmt {
+    my ( $options ) = @_;
+
+    my ( $width, $four_column_mode, $palette ) = @{$options}{
+        "width",
+        "column_mode",
+        "palette",
+    };
+
+    my @w = @{$width};
+
+    my $frame     = Text::Diff::_is_color( $palette->{table_frame} );
+    my $line_num  = Text::Diff::_is_color( $palette->{line_number} );
+    my $del_line  = Text::Diff::_is_color( $palette->{delete_line} );
+    my $add_line  = Text::Diff::_is_color( $palette->{add_line} );
+    my $same_line = Text::Diff::_is_color( $palette->{same_line} );
+    my $res       = Text::Diff::_is_color( $palette->{reset} );
+
+    return $four_column_mode
+        ? (
+            "=" => $frame     . "|"                    . $res .
+                   " "        . $line_num  . "%$w[0]s" . $res .
+                   $frame     . "|"                    . $res .
+                   $same_line . "%-$w[1]s"             . $res .
+                   "  "       . $frame     . "|"       . $res .
+                   " "        . $line_num  . "%$w[2]s" . $res .
+                   $frame     . "|"                    . $res .
+                   $same_line . "%-$w[3]s"             . $res .
+                   "  "       . $frame     . "|"       . $res .
+                   "\n",
+
+            "A" => $frame    . "*"                                  . $res .
+                   " "       . $line_num  . "%$w[0]s"               . $res .
+                   $frame    . "|"                                  . $res .
+                   $del_line . "%-$w[1]s"                           . $res .
+                   "  "      . $frame     . "* %$w[2]s|%-$w[3]s  |" . $res .
+                   "\n",
+
+            "B" => $frame    . "| %$w[0]s|%-$w[1]s  *" . $res .
+                   " "       . $line_num  . "%$w[2]s"  . $res .
+                   $frame    . "|"                     . $res .
+                   $add_line . "%-$w[3]s"              . $res .
+                   "  "      . $frame     . "*"        . $res .
+                   "\n",
+
+            "*" => $frame    . "*"                    . $res .
+                   " "       . $line_num  . "%$w[0]s" . $res .
+                   $frame    . "|"                    . $res .
+                   $del_line . "%-$w[1]s"             . $res .
+                   "  "      . $frame     . "*"       . $res .
+                   " "       . $line_num  . "%$w[2]s" . $res .
+                   $frame    . "|"                    . $res .
+                   $add_line . "%-$w[3]s"             . $res .
+                   "  "      . $frame     . "*"       . $res .
+                   "\n",
+        )
+        : (
+            "=" => $frame     . "|"                    . $res .
+                   " "        . $line_num  . "%$w[0]s" . $res .
+                   $frame     . "|"                    . $res .
+                   $same_line . "%-$w[1]s"             . $res .
+                   "  "       . $frame     . "|"       . $res .
+                   $same_line . "%-$w[2]s"             . $res .
+                   "  "       . $frame     . "|"       . $res .
+                   "\n",
+
+            "A" => $frame    . "*"                    . $res .
+                   " "       . $line_num  . "%$w[0]s" . $res .
+                   $frame    . "|"                    . $res .
+                   $del_line . "%-$w[1]s"             . $res .
+                   "  "      . $frame     . "|"       . $res .
+                   $add_line . "%-$w[2]s"             . $res .
+                   "  "      . $frame     . "|"       . $res .
+                   "\n",
+
+            "B" => $frame    . "|"                    . $res .
+                   " "       . $line_num  . "%$w[0]s" . $res .
+                   $frame    . "|"                    . $res .
+                   $add_line . "%-$w[1]s"             . $res .
+                   "  "      . $frame     . "|"       . $res .
+                   $del_line . "%-$w[2]s"             . $res .
+                   "  "      . $frame     . "*"       . $res .
+                   "\n",
+
+            "*" => $frame    . "*"                    . $res .
+                   " "       . $line_num  . "%$w[0]s" . $res .
+                   $frame    . "|"                    . $res .
+                   $del_line . "%-$w[1]s"             . $res .
+                   "  "      . $frame     . "|"       . $res .
+                   $add_line . "%-$w[2]s"             . $res .
+                   "  "      . $frame     . "*"       . $res .
+                   "\n",
+        );
+}
+
+sub _bar_fmt {
+    my ( $options ) = @_;
+
+    my ( $bar, $four_column_mode, $palette ) = @{$options}{
+        "bar",
+        "column_mode",
+        "palette",
+    };
+
+    my $frame = Text::Diff::_is_color( $palette->{table_frame} );
+    my $res   = Text::Diff::_is_color( $palette->{reset} );
+
+    my @args = ('', '', '');
+    push(@args, '') if $four_column_mode;
+    $bar = sprintf $bar, @args;
+
+    ## Strip ANSI colors for correct symbol ("+", "-") replacements.
+    $bar = colorstrip( $bar ) if defined $palette && keys %{$palette};
+
+    $bar =~ s/\S/+/g;
+    $bar =~ s/ /-/g;
+
+    ## Colorize
+    if ( defined $palette && keys %{$palette} ) {
+        chomp $bar;
+        $bar = $frame . $bar . $res . "\n";
+    }
+
+    return $bar;
+}
+
+sub _heading {
+    my ( $options ) = @_;
+
+    my ( $bar, $fmts, $lines ) = @{$options}{
+        "bar",
+        "fmts",
+        "lines",
+    };
+
+    my %heading_fmts  = %{$fmts};
+    my @heading_lines = @${lines};
+
+    no warnings;
+
+    return join( "",
+        $bar,
+        map {
+            sprintf( $heading_fmts{$_->[-1]}, @$_ );
+        } (
+        @heading_lines,
+        ),
+    );
+}
+
+sub file_footer {
+    my $self = shift;
+    my @seqs = ( shift, shift );
+    my $options = pop;
+
+    my @heading_lines = _header( $options );
+
     ## Not ushifting on to @{$self->{ELTS}} in case it's really big.  Want
     ## to avoid the overhead.
 
@@ -277,25 +470,32 @@ sub file_footer {
         }
     }
 
-    my %fmts = $four_column_mode
-        ? (
-            "=" => "| %$w[0]s|%-$w[1]s  | %$w[2]s|%-$w[3]s  |\n",
-            "A" => "* %$w[0]s|%-$w[1]s  * %$w[2]s|%-$w[3]s  |\n",
-            "B" => "| %$w[0]s|%-$w[1]s  * %$w[2]s|%-$w[3]s  *\n",
-            "*" => "* %$w[0]s|%-$w[1]s  * %$w[2]s|%-$w[3]s  *\n",
-        )
-        : (
-            "=" => "| %$w[0]s|%-$w[1]s  |%-$w[2]s  |\n",
-            "A" => "* %$w[0]s|%-$w[1]s  |%-$w[2]s  |\n",
-            "B" => "| %$w[0]s|%-$w[1]s  |%-$w[2]s  *\n",
-            "*" => "* %$w[0]s|%-$w[1]s  |%-$w[2]s  *\n",
-        );
+    my $palette = $options->{PALETTE};
 
-    my @args = ('', '', '');
-    push(@args, '') if $four_column_mode;
-    $fmts{bar} = sprintf $fmts{"="}, @args;
-    $fmts{bar} =~ s/\S/+/g;
-    $fmts{bar} =~ s/ /-/g;
+    my $fmt_opts = {
+        width       => \@w,
+        column_mode => $four_column_mode,
+        palette     => $palette,
+    };
+
+    my %heading_fmts = _header_fmt( $fmt_opts );
+    my %fmts         = _table_fmt( $fmt_opts );
+
+    $fmts{bar} = _bar_fmt(
+        {
+            bar         => $fmts{"="},
+            column_mode => $four_column_mode,
+            palette     => $palette,
+        }
+    );
+
+    my $heading = _heading(
+        {
+            bar   => $fmts{bar},
+            fmts  => \%heading_fmts,
+            lines => \@heading_lines,
+        }
+    );
 
     # Sometimes the sprintf has too many arguments,
     # which results in a warning on Perl 5.021+
@@ -306,11 +506,10 @@ sub file_footer {
     no warnings;
 
     return join( "",
+        $heading,
         map {
             sprintf( $fmts{$_->[-1]}, @$_ );
         } (
-        ["bar"],
-        @heading_lines,
         @heading_lines ? ["bar"] : (),
         @{$self->{ELTS}},
         ),
@@ -327,12 +526,12 @@ __END__
 
 =head1 NAME
 
-  Text::Diff::Table - Text::Diff plugin to generate "table" format output
+Text::Diff::Table - Text::Diff plugin to generate "table" format output
 
 =head1 SYNOPSIS
 
   use Text::Diff;
-  
+
   diff \@a, $b, { STYLE => "Table" };
 
 =head1 DESCRIPTION
@@ -358,9 +557,9 @@ diffs:
 This format also goes to some pains to highlight "invisible" characters on
 differing elements by selectively escaping whitespace.  Each element is split
 in to three segments (leading whitespace, body, trailing whitespace).  If
-whitespace differs in a segement, that segment is whitespace escaped.
+whitespace differs in a segment, that segment is whitespace escaped.
 
-Here is an example of the selective whitespace.
+Here is an example of the selective whitespace:
 
   +--+--------------------------+--------------------------+
   |  |demo_ws_A.txt             |demo_ws_B.txt             |
@@ -394,10 +593,10 @@ call; so far I'm choosing not to.
 
 =head1 UNICODE
 
-To output the raw unicode chracters consult the documentation of
+To output the raw unicode characters consult the documentation of
 L<Text::Diff::Config>. You can set the C<DIFF_OUTPUT_UNICODE> environment
 variable to 1 to output it from the command line. For more information,
-consult this bug: L<https://rt.cpan.org/Ticket/Display.html?id=54214> .
+consult this bug: L<https://rt.cpan.org/Ticket/Display.html?id=54214>.
 
 =head1 LIMITATIONS
 

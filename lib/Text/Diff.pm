@@ -6,6 +6,7 @@ use warnings;
 use Carp            qw/ croak confess /;
 use Exporter        ();
 use Algorithm::Diff ();
+use Term::ANSIColor 2.02 qw/ :constants color colorvalid /;
 
 our $VERSION = '1.46';
 our @ISA     = qw/ Exporter /;
@@ -23,6 +24,25 @@ my %internal_styles = (
     Context  => undef,
     OldStyle => undef,
     Table    => undef,   ## "internal", but in another module
+);
+
+my %hunks = (
+    header       => undef,
+    line_number  => undef,
+    delete_line  => undef,
+    add_line     => undef,
+    same_line    => undef,
+    context_sep  => undef,
+    oldstyle_sep => undef,
+    table_frame  => undef,
+);
+
+my %default_colors = (
+    header      => BOLD,
+    line_number => CYAN,
+    delete_line => RED,
+    add_line    => GREEN,
+    reset       => RESET,
 );
 
 sub diff {
@@ -59,10 +79,9 @@ sub diff {
                 unless defined $options->{"MTIME_$AorB"};
 
             local $/ = "\n";
-            open F, "<$seq" or croak "$!: $seq";
-            $seqs[$i] = [<F>];
-            close F;
-
+            open my $fh, "<", $seq or croak "Failed to open $seq: $!";
+            $seqs[$i] = [<$fh>];
+            close $fh;
         }
         elsif ( $type eq "GLOB" || UNIVERSAL::isa( $seq, "IO::Handle" ) ) {
             $options->{"OFFSET_$AorB"} = 1
@@ -78,7 +97,8 @@ sub diff {
     ## Config vars
     my $output;
     my $output_handler = $options->{OUTPUT};
-    my $type = ref $output_handler ;
+    my $type = ref $output_handler;
+    my $is_tty;
     if ( ! defined $output_handler ) {
         $output = "";
         $output_handler = sub { $output .= shift };
@@ -95,6 +115,8 @@ sub diff {
         $output_handler = sub { push @$out_ref, shift };
     }
     elsif ( $type eq "GLOB" || UNIVERSAL::isa $output_handler, "IO::Handle" ) {
+        $is_tty = -t $output_handler ? 1 : 0;
+
         my $output_handle = $output_handler;
         $output_handler = sub { print $output_handle shift };
     }
@@ -120,6 +142,15 @@ sub diff {
         ? @{$options->{KEYGEN_ARGS}}
         : ();
 
+    $options->{COLOR} = 0 unless defined $options->{COLOR};
+
+    if ( $options->{COLOR} ne "always" ) {
+        $options->{COLOR} = 0 if defined $is_tty && ! $is_tty || ! -t STDOUT;
+    }
+
+    $options->{PALETTE} = $options->{COLOR} ? _get_colors($options->{PALETTE})
+                                            : undef;
+
     ## State vars
     my $diffs = 0; ## Number of discards this hunk
     my $ctx   = 0; ## Number of " " (ctx_lines) ops pushed after last diff.
@@ -140,8 +171,8 @@ sub diff {
     ## need to know the total length of both of the two
     ## subsequences so the line count can be printed in the
     ## header.
-    my $dis_a = sub {push @ops, [@_[0,1],"-"]; ++$diffs ; $ctx = 0 };
-    my $dis_b = sub {push @ops, [@_[0,1],"+"]; ++$diffs ; $ctx = 0 };
+    my $dis_a = sub { push @ops, [@_[0,1],"-"]; ++$diffs; $ctx = 0 };
+    my $dis_b = sub { push @ops, [@_[0,1],"+"]; ++$diffs; $ctx = 0 };
 
     Algorithm::Diff::traverse_sequences(
         @seqs,
@@ -188,9 +219,15 @@ sub _header {
     ## remember to change Text::Diff::Table if this logic is tweaked.
     return "" unless defined $fn1 && defined $fn2;
 
+    $t1 = defined $t1 ? "\t" . localtime $t1 : ();
+    $t2 = defined $t2 ? "\t" . localtime $t2 : ();
+
+    my $header = _is_color( $h->{PALETTE}{header} );
+    my $reset  = _is_color( $h->{PALETTE}{reset} );
+
     return join( "",
-        $p1, " ", $fn1, defined $t1 ? "\t" . localtime $t1 : (), "\n",
-        $p2, " ", $fn2, defined $t2 ? "\t" . localtime $t2 : (), "\n",
+        $header, $p1, " ", $fn1, $t1, $reset, "\n",
+        $header, $p2, " ", $fn2, $t2, $reset, "\n",
     );
 }
 
@@ -226,7 +263,7 @@ sub _range {
 }
 
 sub _op_to_line {
-    my ( $seqs, $op, $a_or_b, $op_prefixes ) = @_;
+    my ( $seqs, $op, $a_or_b, $op_prefixes, $options ) = @_;
 
     my $opcode = $op->[OPCODE];
     return () unless defined $op_prefixes->{$opcode};
@@ -236,11 +273,61 @@ sub _op_to_line {
     return () unless defined $op_sym;
 
     $a_or_b = $op->[OPCODE] ne "+" ? 0 : 1 unless defined $a_or_b;
-    my @line = ( $op_sym, $seqs->[$a_or_b][$op->[$a_or_b]] );
-    unless ( $line[1] =~ /(?:\n|\r\n)$/ ) {
+
+    my $seq_line = $seqs->[$a_or_b][$op->[$a_or_b]];
+
+    my $colors = $options->{PALETTE};
+    my $color  = "";
+
+    if ( defined $colors && keys %{$colors} ) {
+        ## Do not colorize Unified " " OPCODE lines, unless its color option is
+        ## defined.
+        if ( $op_sym ne " " ) {
+            $color = $a_or_b eq A ? $colors->{delete_line}
+                                  : $colors->{add_line};
+        }
+        elsif ( $op_sym eq " " && defined $colors->{same_line} ) {
+            $color = $colors->{same_line};
+        }
+    }
+
+    # Append a reset color before a line break or end of string.
+    $seq_line =~ s/(\r?\n$|\z)/$colors->{reset}$1/ if $color ne "";
+
+    my @line = ( $color . $op_sym, $seq_line );
+
+    unless ( $line[1] =~ /\r?\n$/ ) {
         $line[1] .= "\n\\ No newline at end of file\n";
     }
+
     return @line;
+}
+
+sub _get_colors
+{
+    my ( $palette ) = @_;
+
+    my %colors = %default_colors;
+
+    if ( defined $palette && ref $palette eq "HASH" && keys %{$palette} ) {
+        for my $section ( keys %{$palette} ) {
+            next unless exists $hunks{$section};
+
+            my $ansi = $palette->{$section};
+
+            # Silently ignore invalid Term::ANSIColor colors.
+            $colors{$section} = color( $ansi ) if colorvalid( $ansi );
+        }
+    }
+
+    return \%colors;
+}
+
+sub _is_color {
+    my ( $ansi, $reset ) = @_;
+
+    return $reset if defined $ansi && defined $reset;
+    return defined $ansi ? $ansi : "";
 }
 
 SCOPE: {
@@ -266,7 +353,7 @@ SCOPE: {
 
 sub Text::Diff::Unified::file_header {
     shift; ## No instance data
-    my $options = pop ;
+    my $options = pop;
 
     _header(
         { FILENAME_PREFIX_A => "---", FILENAME_PREFIX_B => "+++", %$options }
@@ -275,42 +362,60 @@ sub Text::Diff::Unified::file_header {
 
 sub Text::Diff::Unified::hunk_header {
     shift; ## No instance data
-    pop; ## Ignore options
-    my $ops = pop;
+    my $options = pop;
+    my $ops     = pop;
 
     return join( "",
+        _is_color( $options->{PALETTE}{line_number} ),
         "@@ -",
         _range( $ops, A, "unified" ),
         " +",
         _range( $ops, B, "unified" ),
-        " @@\n",
+        " @@",
+        _is_color( $options->{PALETTE}{reset} ),
+        "\n",
     );
 }
 
 sub Text::Diff::Unified::hunk {
     shift; ## No instance data
-    pop; ## Ignore options
-    my $ops = pop;
+    my $options = pop;
+    my $ops     = pop;
 
     my $prefixes = { "+" => "+", " " => " ", "-" => "-" };
 
-    return join "", map _op_to_line( \@_, $_, undef, $prefixes ), @$ops
+    return join( "",
+        map _op_to_line( \@_, $_, undef, $prefixes, $options ),
+        @$ops,
+    );
 }
 
 @Text::Diff::Context::ISA = qw( Text::Diff::Base );
 
 sub Text::Diff::Context::file_header {
-    _header { FILENAME_PREFIX_A=>"***", FILENAME_PREFIX_B=>"---", %{$_[-1]} };
+    _header(
+        { FILENAME_PREFIX_A => "***", FILENAME_PREFIX_B => "---", %{$_[-1]} }
+    );
 }
 
 sub Text::Diff::Context::hunk_header {
-    return "***************\n";
+    shift; ## No instance data
+    my $options = pop;
+
+    my $colors = $options->{PALETTE};
+
+    return join( "",
+        _is_color( $colors->{context_sep} ),
+        "***************",
+        _is_color( $colors->{context_sep}, $colors->{reset} ),
+        "\n",
+    );
 }
 
 sub Text::Diff::Context::hunk {
     shift; ## No instance data
-    pop; ## Ignore options
-    my $ops = pop;
+    my $options = pop;
+    my $ops     = pop;
     ## Leave the sequences in @_[0,1]
 
     my $a_range = _range( $ops, A, "" );
@@ -319,7 +424,7 @@ sub Text::Diff::Context::hunk {
     ## Sigh.  Gotta make sure that differences that aren't adds/deletions
     ## get prefixed with "!", and that the old opcodes are removed.
     my $after;
-    for ( my $start = 0; $start <= $#$ops ; $start = $after ) {
+    for ( my $start = 0; $start <= $#$ops; $start = $after ) {
         ## Scan until next difference
         $after = $start + 1;
         my $opcode = $ops->[$start]->[OPCODE];
@@ -338,14 +443,17 @@ sub Text::Diff::Context::hunk {
         }
     }
 
+    my $line_num = _is_color( $options->{PALETTE}{line_number} );
+    my $reset    = _is_color( $options->{PALETTE}{reset} );
+
     my $b_prefixes = { "+" => "+ ",  " " => "  ", "-" => undef, "!" => "! " };
     my $a_prefixes = { "+" => undef, " " => "  ", "-" => "- ",  "!" => "! " };
 
     return join( "",
-        "*** ", $a_range, " ****\n",
-        map( _op_to_line( \@_, $_, A, $a_prefixes ), @$ops ),
-        "--- ", $b_range, " ----\n",
-        map( _op_to_line( \@_, $_, B, $b_prefixes ), @$ops ),
+        $line_num . "*** ", $a_range, " ****" . $reset . "\n",
+        map( _op_to_line( \@_, $_, A, $a_prefixes, $options ), @$ops ),
+        $line_num . "--- ", $b_range, " ----" . $reset . "\n",
+        map( _op_to_line( \@_, $_, B, $b_prefixes, $options ), @$ops ),
     );
 }
 
@@ -362,18 +470,25 @@ sub _op {
 
 sub Text::Diff::OldStyle::hunk_header {
     shift; ## No instance data
-    pop; ## ignore options
-    my $ops = pop;
+    my $options = pop;
+    my $ops     = pop;
 
     my $op = _op $ops;
 
-    return join "", _range( $ops, A, "" ), $op, _range( $ops, B, "" ), "\n";
+    return join( "",
+        _is_color( $options->{PALETTE}{line_number} ),
+        _range( $ops, A, "" ),
+        $op,
+        _range( $ops, B, "" ),
+        _is_color( $options->{PALETTE}{reset} ),
+        "\n",
+    );
 }
 
 sub Text::Diff::OldStyle::hunk {
     shift; ## No instance data
-    pop; ## ignore options
-    my $ops = pop;
+    my $options = pop;
+    my $ops     = pop;
     ## Leave the sequences in @_[0,1]
 
     my $a_prefixes = { "+" => undef,  " " => undef, "-" => "< "  };
@@ -381,10 +496,14 @@ sub Text::Diff::OldStyle::hunk {
 
     my $op = _op $ops;
 
+    my $colors = $options->{PALETTE};
+    my $sep    = _is_color( $colors->{oldstyle_sep} );
+    my $reset  = _is_color( $colors->{oldstyle_sep}, $colors->{reset} );
+
     return join( "",
-        map( _op_to_line( \@_, $_, A, $a_prefixes ), @$ops ),
-        $op eq "c" ? "---\n" : (),
-        map( _op_to_line( \@_, $_, B, $b_prefixes ), @$ops ),
+        map( _op_to_line( \@_, $_, A, $a_prefixes, $options ), @$ops ),
+        $op eq "c" ? $sep . "---" . $reset . "\n" : (),
+        map( _op_to_line( \@_, $_, B, $b_prefixes, $options ), @$ops ),
     );
 }
 
@@ -512,6 +631,30 @@ Context.
 
 These are passed to L<Algorithm::Diff/traverse_sequences>.
 
+=item COLOR, PALETTE
+
+C<diff()> output will be colorized based on GNU C<diff> colors depending on
+the values passed.  A true value colorizes only if C<STDOUT> or C<OUTPUT>
+handle is an interactive TTY, unless "always" is passed; if false is given,
+never colorizes.  Defaults to 0.
+
+    COLOR => 1,          # like: GNU diff "auto"
+    COLOR => "always",
+
+With PALETTE, C<diff()> colors can be customized according to the
+L<Term::ANSIColor> spec by passing a hash with the following:
+
+    ## Hunk sections and its default colors.
+    ## NOTE: invalid colors are ignored.
+    header       => BOLD,    # like: --- A   Mon Nov 12 23:49:30 2001
+    line_number  => CYAN,    # like: @@ -2,13 +2,13 @@
+    delete_line  => RED,     # like: -5d
+    add_line     => GREEN,   # like: +5a
+    same_line    => undef,   # "Unified" unchanged lines
+    context_sep  => undef,   # "Context" separator: "***************"
+    oldstyle_sep => undef,   # "OldStyle" separator: "---"
+    table_frame  => undef,   # "Table" frames: "+--+----+--+----+", "|", "*"
+
 =back
 
 B<Note>: if neither C<FILENAME_> option is defined, the header will not be
@@ -537,7 +680,7 @@ overloading:
 
 Some output formats are provided by external modules (which are loaded
 automatically), such as L<Text::Diff::Table>.  These are
-are documented here to keep the documentation simple.
+documented here to keep the documentation simple.
 
 =head2 Text::Diff::Base
 
